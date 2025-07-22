@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package gett.api;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FileOptions {
+  string canonical_service_name = 50001;
+}
