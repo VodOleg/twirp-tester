@@ -135,6 +135,258 @@ async function parseProtoContent(protoContent, importFiles = null) {
 }
 
 /**
+ * Extract optional fields for each service method
+ * @param {string} protoContent - The proto file content as string
+ * @param {Map<string, string>} importFiles - Optional map of import file names to their content
+ * @returns {Promise<Object>} Map where key = method name, value = array of optional field names
+ */
+async function getOptionalFieldsMap(protoContent, importFiles = null) {
+  try {
+    console.log(`Extracting optional fields from proto content (${protoContent.length} characters)`);
+    
+    // Create a new protobuf root
+    const root = new protobuf.Root();
+    
+    // Add common google protobuf types
+    root.define('google.protobuf').add(
+      new protobuf.Type('Timestamp').add(
+        new protobuf.Field('seconds', 1, 'int64'),
+        new protobuf.Field('nanos', 2, 'int32')
+      )
+    );
+    
+    // Set up import resolution if importFiles are provided
+    if (importFiles) {
+      console.log(`Setting up import resolution for ${importFiles.size} files`);
+      
+      // Add a custom resolvePath function
+      root.resolvePath = function(origin, target) {
+        console.log(`Resolving: ${target} from ${origin}`);
+        for (const [filename, content] of importFiles) {
+          if (filename.endsWith(target) || filename === target) {
+            console.log(`Found exact match: ${filename}`);
+            return filename;
+          }
+        }
+        console.log(`No match found for: ${target}, returning as-is`);
+        return target;
+      };
+      
+      // Custom fetch function to provide file contents
+      root.fetch = function(filename) {
+        console.log(`Fetching file: ${filename}`);
+        const content = importFiles.get(filename);
+        if (content) {
+          console.log(`Found content for ${filename}`);
+          return Promise.resolve(content);
+        }
+        
+        // Try to find by basename or partial match
+        for (const [key, value] of importFiles) {
+          if (key.endsWith(filename) || path.basename(key) === path.basename(filename)) {
+            console.log(`Found by basename: ${key} for ${filename}`);
+            return Promise.resolve(value);
+          }
+        }
+        
+        console.log(`File not found: ${filename}`);
+        return Promise.reject(new Error(`File not found: ${filename}`));
+      };
+    }
+    
+    // Parse the proto content
+    await protobuf.parse(protoContent, root, { keepCase: true });
+    console.log('Proto content parsed successfully for optional fields extraction');
+    
+    // Extract explicit optional fields from proto content using text parsing
+    const explicitOptionalFields = parseExplicitOptionalFields(protoContent);
+    
+    // Extract optional fields for each method
+    const optionalFieldsMap = {};
+    
+    function extractOptionalFields(namespace, prefix = '') {
+      for (const [name, nested] of Object.entries(namespace.nested || {})) {
+        if (nested instanceof protobuf.Service) {
+          console.log(`Found service: ${name} - extracting optional fields`);
+          
+          // Process each method in the service
+          for (const [methodName, method] of Object.entries(nested.methods)) {
+            console.log(`  Processing method: ${methodName} -> ${method.requestType}`);
+            
+            try {
+              // Find the request message type
+              const requestType = root.lookupType(method.requestType);
+              
+              // Extract optional fields from the request type
+              const optionalFields = getOptionalFieldsFromTypeWithExplicit(requestType, explicitOptionalFields);
+              
+              // Store in the map
+              optionalFieldsMap[methodName] = optionalFields;
+              
+              console.log(`    Optional fields for ${methodName}:`, optionalFields);
+              
+            } catch (error) {
+              console.error(`Error processing method ${methodName}:`, error.message);
+              // Fallback to empty array
+              optionalFieldsMap[methodName] = [];
+            }
+          }
+        } else if (nested.nested) {
+          // Recursively check nested namespaces
+          extractOptionalFields(nested, prefix ? `${prefix}.${name}` : name);
+        }
+      }
+    }
+    
+    extractOptionalFields(root);
+    
+    console.log(`Extracted optional fields for ${Object.keys(optionalFieldsMap).length} methods`);
+    return optionalFieldsMap;
+    
+  } catch (error) {
+    console.error('Error extracting optional fields:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Parse proto content to find fields with explicit 'optional' keyword
+ * @param {string} protoContent - The proto file content
+ * @returns {Set<string>} Set of field paths that have explicit optional keyword
+ */
+function parseExplicitOptionalFields(protoContent) {
+  const explicitOptionalFields = new Set();
+  const lines = protoContent.split('\n');
+  
+  let messageStack = [];
+  let braceDepth = 0;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmedLine = line.trim();
+    
+    // Skip comments and empty lines
+    if (trimmedLine.startsWith('//') || trimmedLine === '') continue;
+    
+    // Track message declarations
+    const messageMatch = trimmedLine.match(/^\s*message\s+(\w+)/);
+    if (messageMatch) {
+      const messageName = messageMatch[1];
+      messageStack.push(messageName);
+      console.log(`Entering message: ${messageStack.join('.')}`);
+    }
+    
+    // Track braces to know when we exit messages
+    const openBraces = (line.match(/{/g) || []).length;
+    const closeBraces = (line.match(/}/g) || []).length;
+    braceDepth += openBraces - closeBraces;
+    
+    // If we have closing braces and we're exiting a message
+    if (closeBraces > 0 && messageStack.length > 0) {
+      for (let j = 0; j < closeBraces; j++) {
+        if (messageStack.length > 0) {
+          const exitedMessage = messageStack.pop();
+          console.log(`Exiting message: ${exitedMessage}, remaining stack: ${messageStack.join('.')}`);
+        }
+      }
+    }
+    
+    // Find lines with explicit optional keyword
+    if (trimmedLine.startsWith('optional ')) {
+      const fieldMatch = trimmedLine.match(/optional\s+[\w.]+\s+(\w+)\s*=/);
+      if (fieldMatch) {
+        const fieldName = fieldMatch[1];
+        const fullPath = messageStack.length > 0 ? `${messageStack.join('.')}.${fieldName}` : fieldName;
+        explicitOptionalFields.add(fullPath);
+        console.log(`Found explicit optional field: ${fullPath}`);
+      }
+    }
+  }
+  
+  return explicitOptionalFields;
+}
+
+/**
+ * Extract optional field names from a protobuf message type using both protobuf metadata and explicit parsing
+ * @param {protobuf.Type} messageType - The protobuf message type
+ * @param {Set<string>} explicitOptionalFields - Set of explicitly optional field paths
+ * @returns {Array<string>} Array of optional field names (including nested paths)
+ */
+function getOptionalFieldsFromTypeWithExplicit(messageType, explicitOptionalFields) {
+  const optionalFields = [];
+  
+  function extractOptionalFieldsRecursive(type, fieldPrefix = '', typePrefix = '') {
+    for (const field of type.fieldsArray) {
+      const fieldPath = fieldPrefix ? `${fieldPrefix}.${field.name}` : field.name;
+      const typePath = typePrefix ? `${typePrefix}.${type.name}.${field.name}` : `${type.name}.${field.name}`;
+      
+      // Check if this field path is in our explicit optional fields set
+      if (explicitOptionalFields.has(typePath)) {
+        optionalFields.push(fieldPath);
+      }
+      
+      // If this field is a message type, recursively check its fields
+      try {
+        if (field.resolvedType && field.resolvedType instanceof protobuf.Type) {
+          extractOptionalFieldsRecursive(field.resolvedType, fieldPath, typePrefix ? `${typePrefix}.${type.name}` : type.name);
+        } else {
+          // Try to find nested types within the current message
+          const nestedTypeName = field.type;
+          if (type.nested && type.nested[nestedTypeName] && type.nested[nestedTypeName] instanceof protobuf.Type) {
+            extractOptionalFieldsRecursive(type.nested[nestedTypeName], fieldPath, typePrefix ? `${typePrefix}.${type.name}` : type.name);
+          }
+        }
+      } catch (error) {
+        // If we can't resolve the type, just continue
+        console.log(`Could not resolve nested type for field ${fieldPath}: ${error.message}`);
+      }
+    }
+  }
+  
+  extractOptionalFieldsRecursive(messageType);
+  return optionalFields;
+}
+
+/**
+ * Extract optional field names from a protobuf message type
+ * @param {protobuf.Type} messageType - The protobuf message type
+ * @returns {Array<string>} Array of optional field names (including nested paths)
+ */
+function getOptionalFieldsFromType(messageType) {
+  const optionalFields = [];
+  
+  function extractOptionalFieldsRecursive(type, fieldPrefix = '') {
+    for (const field of type.fieldsArray) {
+      const fieldPath = fieldPrefix ? `${fieldPrefix}.${field.name}` : field.name;
+      
+      // Check if the field has explicit optional keyword
+      if (field.rule === 'optional') {
+        optionalFields.push(fieldPath);
+      }
+      
+      // If this field is a message type, recursively check its fields
+      try {
+        if (field.resolvedType && field.resolvedType instanceof protobuf.Type) {
+          extractOptionalFieldsRecursive(field.resolvedType, fieldPath);
+        } else {
+          // Try to find nested types within the current message
+          const nestedTypeName = field.type;
+          if (type.nested && type.nested[nestedTypeName] && type.nested[nestedTypeName] instanceof protobuf.Type) {
+            extractOptionalFieldsRecursive(type.nested[nestedTypeName], fieldPath);
+          }
+        }
+      } catch (error) {
+        // If we can't resolve the type, just continue
+        console.log(`Could not resolve nested type for field ${fieldPath}: ${error.message}`);
+      }
+    }
+  }
+  
+  extractOptionalFieldsRecursive(messageType);
+  return optionalFields;
+}
+
+/**
  * Generate an empty JSON template for a protobuf message type
  * @param {protobuf.Type} messageType - The protobuf message type
  * @returns {Object} Empty JSON object with all fields set to appropriate empty values
@@ -278,8 +530,12 @@ async function main() {
 module.exports = {
   parseProtoFile,
   parseProtoContent,
+  getOptionalFieldsMap,
   generateEmptyJsonTemplate,
-  getEmptyValueForType
+  getEmptyValueForType,
+  getOptionalFieldsFromType,
+  getOptionalFieldsFromTypeWithExplicit,
+  parseExplicitOptionalFields
 };
 
 // Run main function if this script is executed directly

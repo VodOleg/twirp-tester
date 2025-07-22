@@ -4,7 +4,7 @@ const protobuf = require('protobufjs');
 const path = require('path');
 const fs = require('fs').promises;
 const cors = require('cors');
-const { parseProtoContent } = require('./protoparser');
+const { parseProtoContent, getOptionalFieldsMap } = require('./protoparser');
 
 // Setup logging to both console and file
 const logFile = path.join(__dirname, 'server.log');
@@ -79,7 +79,12 @@ app.post('/api/parse-proto', upload.array('protoFiles'), async (req, res) => {
     log('Using protoparser to extract services and generate JSON templates...');
     const methodMap = await parseProtoContent(mainContent, uploadedFiles);
     
+    // Extract optional fields for each method
+    log('Extracting optional fields for each method...');
+    const optionalFieldsMap = await getOptionalFieldsMap(mainContent, uploadedFiles);
+    
     log(`Successfully extracted ${Object.keys(methodMap).length} methods with JSON templates`);
+    log(`Successfully extracted optional fields for ${Object.keys(optionalFieldsMap).length} methods`);
     
     // Convert methodMap to the format expected by the frontend
     const services = {};
@@ -109,7 +114,8 @@ app.post('/api/parse-proto', upload.array('protoFiles'), async (req, res) => {
               name: methodName,
               requestType: method.requestType,
               responseType: method.responseType,
-              jsonTemplate: methodMap[methodName] || {} // Add the JSON template from our parser
+              jsonTemplate: methodMap[methodName] || {}, // Add the JSON template from our parser
+              optionalFields: optionalFieldsMap[methodName] || [] // Add the optional fields list
             };
           }
         } else if (nested.nested) {
@@ -127,11 +133,12 @@ app.post('/api/parse-proto', upload.array('protoFiles'), async (req, res) => {
       await fs.unlink(file.path).catch(() => {});
     }
     
-    log('Sending response with JSON templates...');
+    log('Sending response with JSON templates and optional fields...');
     
     const response = { 
       services, 
-      methodTemplates: methodMap, 
+      methodTemplates: methodMap,
+      optionalFields: optionalFieldsMap,
       success: true 
     };
     
