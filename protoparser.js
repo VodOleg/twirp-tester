@@ -625,7 +625,8 @@ function getEmptyValueForType(fieldType, root, parentType) {
     default:
       // Handle special google protobuf types
       if (fieldType === 'google.protobuf.Timestamp') {
-        return '';  // Empty string for timestamp fields
+        // Return current time in ISO 8601 format for timestamp fields
+        return new Date().toISOString();
       }
       
       // Try to find nested types first (within the current message)
