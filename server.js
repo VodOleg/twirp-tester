@@ -59,9 +59,9 @@ app.post('/api/parse-proto', upload.array('protoFiles'), async (req, res) => {
     // Add common proto files from file system
     log('Adding common proto files...');
     const commonProtoFiles = [
-      'google/protobuf/timestamp.proto',
-      'google/protobuf/descriptor.proto',
-      'gett/api/annotations.proto'
+      'imports/google/protobuf/timestamp.proto',
+      'imports/google/protobuf/descriptor.proto',
+      'imports/gett/api/annotations.proto'
     ];
     
     for (const protoPath of commonProtoFiles) {
@@ -146,6 +146,60 @@ app.post('/api/parse-proto', upload.array('protoFiles'), async (req, res) => {
       await fs.unlink(file.path).catch(() => {});
     }
     
+    res.status(400).json({ 
+      error: error.message,
+      success: false 
+    });
+  }
+});
+
+// Make Twirp request from backend to avoid CORS issues
+app.post('/api/twirp-request', async (req, res) => {
+  try {
+    const { baseUrl, serviceName, methodName, requestData } = req.body;
+    
+    if (!baseUrl || !serviceName || !methodName || !requestData) {
+      throw new Error('Missing required fields: baseUrl, serviceName, methodName, requestData');
+    }
+    
+    // Fix service name by removing leading dot if present
+    const cleanServiceName = serviceName.startsWith('.') ? serviceName.substring(1) : serviceName;
+    
+    // Construct the Twirp URL
+    const twirpUrl = `${baseUrl}/twirp/${cleanServiceName}/${methodName}`;
+    
+    log(`Making Twirp request to: ${twirpUrl}`);
+    log(`Request data:`, JSON.stringify(requestData, null, 2));
+    
+    const response = await fetch(twirpUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestData)
+    });
+    
+    const responseText = await response.text();
+    log(`Response status: ${response.status}`);
+    log(`Response text:`, responseText);
+    
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (parseError) {
+      responseData = { rawResponse: responseText };
+    }
+    
+    res.json({
+      success: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      data: responseData,
+      url: twirpUrl
+    });
+    
+  } catch (error) {
+    log('Twirp request error:', error.message);
     res.status(400).json({ 
       error: error.message,
       success: false 

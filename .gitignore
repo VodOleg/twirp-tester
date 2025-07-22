@@ -91,3 +91,9 @@ public
 uploads/
 *.log
 server.log
+
+# Imported proto files and dependencies
+imports/
+
+# Example files (not part of the main codebase)
+examples/

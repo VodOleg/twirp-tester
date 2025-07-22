@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package post_ride.v1;
-import "google/protobuf/timestamp.proto";
+import "imports/google/protobuf/timestamp.proto";
 
 option go_package = "github.com/gtforge/global_ride_management_service/pkg/sdk/post_ride/v1";
 

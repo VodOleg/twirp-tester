@@ -87,9 +87,11 @@ twirp-proto-tester/
 ├── protoparser.js          # Core proto parsing and template generation
 ├── public/
 │   └── index.html         # Web interface
-├── google/protobuf/       # Common protobuf definitions
-├── gett/api/             # Additional proto imports
-├── post_ride.proto       # Sample proto file for testing
+├── imports/               # External proto dependencies (gitignored)
+│   ├── google/protobuf/   # Common protobuf definitions
+│   └── gett/api/          # Additional proto imports
+├── examples/              # Example proto files (gitignored)
+│   └── post_ride.proto    # Sample proto file for testing
 └── package.json          # Dependencies and scripts
 ```
 
