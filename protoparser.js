@@ -135,6 +135,183 @@ async function parseProtoContent(protoContent, importFiles = null) {
 }
 
 /**
+ * Extract enum values for each field in each service method
+ * @param {string} protoContent - The proto file content as string
+ * @param {Map<string, string>} importFiles - Optional map of import file names to their content
+ * @returns {Promise<Object>} Map where key = method name, value = map of field names to enum values
+ */
+async function getEnumFieldsMap(protoContent, importFiles = null) {
+  try {
+    console.log(`Extracting enum fields from proto content (${protoContent.length} characters)`);
+    
+    // Create a new protobuf root
+    const root = new protobuf.Root();
+    
+    // Add common google protobuf types
+    root.define('google.protobuf').add(
+      new protobuf.Type('Timestamp').add(
+        new protobuf.Field('seconds', 1, 'int64'),
+        new protobuf.Field('nanos', 2, 'int32')
+      )
+    );
+    
+    // Set up import resolution if importFiles are provided
+    if (importFiles) {
+      console.log(`Setting up import resolution for ${importFiles.size} files`);
+      
+      // Add a custom resolvePath function
+      root.resolvePath = function(origin, target) {
+        console.log(`Resolving: ${target} from ${origin}`);
+        for (const [filename, content] of importFiles) {
+          if (filename.endsWith(target) || filename === target) {
+            console.log(`Found exact match: ${filename}`);
+            return filename;
+          }
+        }
+        console.log(`No match found for: ${target}, returning as-is`);
+        return target;
+      };
+      
+      // Custom fetch function to provide file contents
+      root.fetch = function(filename) {
+        console.log(`Fetching file: ${filename}`);
+        const content = importFiles.get(filename);
+        if (content) {
+          console.log(`Found content for ${filename}`);
+          return Promise.resolve(content);
+        }
+        
+        // Try to find by basename or partial match
+        for (const [key, value] of importFiles) {
+          if (key.endsWith(filename) || path.basename(key) === path.basename(filename)) {
+            console.log(`Found by basename: ${key} for ${filename}`);
+            return Promise.resolve(value);
+          }
+        }
+        
+        console.log(`File not found: ${filename}`);
+        return Promise.reject(new Error(`File not found: ${filename}`));
+      };
+    }
+    
+    // Parse the proto content
+    await protobuf.parse(protoContent, root, { keepCase: true });
+    console.log('Proto content parsed successfully for enum fields extraction');
+    
+    // Extract enum fields for each method
+    const enumFieldsMap = {};
+    
+    function extractEnumFields(namespace, prefix = '') {
+      for (const [name, nested] of Object.entries(namespace.nested || {})) {
+        if (nested instanceof protobuf.Service) {
+          console.log(`Found service: ${name} - extracting enum fields`);
+          
+          // Process each method in the service
+          for (const [methodName, method] of Object.entries(nested.methods)) {
+            console.log(`  Processing method: ${methodName} -> ${method.requestType}`);
+            
+            try {
+              // Find the request message type
+              const requestType = root.lookupType(method.requestType);
+              
+              // Extract enum fields from the request type
+              const enumFields = getEnumFieldsFromType(requestType, root);
+              
+              // Store in the map
+              enumFieldsMap[methodName] = enumFields;
+              
+              console.log(`    Enum fields for ${methodName}:`, Object.keys(enumFields));
+              
+            } catch (error) {
+              console.error(`Error processing method ${methodName}:`, error.message);
+              // Fallback to empty object
+              enumFieldsMap[methodName] = {};
+            }
+          }
+        } else if (nested.nested) {
+          // Recursively check nested namespaces
+          extractEnumFields(nested, prefix ? `${prefix}.${name}` : name);
+        }
+      }
+    }
+    
+    extractEnumFields(root);
+    
+    console.log(`Extracted enum fields for ${Object.keys(enumFieldsMap).length} methods`);
+    return enumFieldsMap;
+    
+  } catch (error) {
+    console.error('Error extracting enum fields:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Extract enum field names and their values from a protobuf message type
+ * @param {protobuf.Type} messageType - The protobuf message type
+ * @param {protobuf.Root} root - The protobuf root for type lookup
+ * @returns {Object} Map where key = field path, value = array of enum values
+ */
+function getEnumFieldsFromType(messageType, root) {
+  const enumFields = {};
+  
+  function extractEnumFieldsRecursive(type, fieldPrefix = '') {
+    for (const field of type.fieldsArray) {
+      const fieldPath = fieldPrefix ? `${fieldPrefix}.${field.name}` : field.name;
+      
+      // Check if this field is an enum type
+      try {
+        // First, try to find enum in nested types of the current message
+        if (type.nested && type.nested[field.type] && type.nested[field.type] instanceof protobuf.Enum) {
+          const enumType = type.nested[field.type];
+          const enumValues = Object.keys(enumType.values);
+          enumFields[fieldPath] = enumValues;
+          console.log(`    Found enum field ${fieldPath}: [${enumValues.join(', ')}]`);
+        } else {
+          // Try to resolve the field type as an enum
+          try {
+            const resolvedType = root.lookupEnum(field.type);
+            if (resolvedType) {
+              const enumValues = Object.keys(resolvedType.values);
+              enumFields[fieldPath] = enumValues;
+              console.log(`    Found enum field ${fieldPath}: [${enumValues.join(', ')}]`);
+            }
+          } catch (enumError) {
+            // Not an enum, check if it's a message type for recursive processing
+            try {
+              let nestedType = null;
+              
+              // Try to get the resolved type first
+              if (field.resolvedType && field.resolvedType instanceof protobuf.Type) {
+                nestedType = field.resolvedType;
+              } else if (type.nested && type.nested[field.type] && type.nested[field.type] instanceof protobuf.Type) {
+                // Try nested types within current message
+                nestedType = type.nested[field.type];
+              } else {
+                // Try to resolve from root
+                nestedType = root.lookupType(field.type);
+              }
+              
+              if (nestedType && nestedType instanceof protobuf.Type) {
+                extractEnumFieldsRecursive(nestedType, fieldPath);
+              }
+            } catch (messageError) {
+              // Not a message type either, just continue
+            }
+          }
+        }
+      } catch (error) {
+        // If we can't resolve the type, just continue
+        console.log(`Could not resolve type for field ${fieldPath}: ${error.message}`);
+      }
+    }
+  }
+  
+  extractEnumFieldsRecursive(messageType);
+  return enumFields;
+}
+
+/**
  * Extract optional fields for each service method
  * @param {string} protoContent - The proto file content as string
  * @param {Map<string, string>} importFiles - Optional map of import file names to their content
@@ -531,10 +708,12 @@ module.exports = {
   parseProtoFile,
   parseProtoContent,
   getOptionalFieldsMap,
+  getEnumFieldsMap,
   generateEmptyJsonTemplate,
   getEmptyValueForType,
   getOptionalFieldsFromType,
   getOptionalFieldsFromTypeWithExplicit,
+  getEnumFieldsFromType,
   parseExplicitOptionalFields
 };
 

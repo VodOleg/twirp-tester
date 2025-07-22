@@ -4,7 +4,7 @@ const protobuf = require('protobufjs');
 const path = require('path');
 const fs = require('fs').promises;
 const cors = require('cors');
-const { parseProtoContent, getOptionalFieldsMap } = require('./protoparser');
+const { parseProtoContent, getOptionalFieldsMap, getEnumFieldsMap } = require('./protoparser');
 
 // Setup logging to both console and file
 const logFile = path.join(__dirname, 'server.log');
@@ -83,8 +83,13 @@ app.post('/api/parse-proto', upload.array('protoFiles'), async (req, res) => {
     log('Extracting optional fields for each method...');
     const optionalFieldsMap = await getOptionalFieldsMap(mainContent, uploadedFiles);
     
+    // Extract enum fields for each method
+    log('Extracting enum fields for each method...');
+    const enumFieldsMap = await getEnumFieldsMap(mainContent, uploadedFiles);
+    
     log(`Successfully extracted ${Object.keys(methodMap).length} methods with JSON templates`);
     log(`Successfully extracted optional fields for ${Object.keys(optionalFieldsMap).length} methods`);
+    log(`Successfully extracted enum fields for ${Object.keys(enumFieldsMap).length} methods`);
     
     // Convert methodMap to the format expected by the frontend
     const services = {};
@@ -115,7 +120,8 @@ app.post('/api/parse-proto', upload.array('protoFiles'), async (req, res) => {
               requestType: method.requestType,
               responseType: method.responseType,
               jsonTemplate: methodMap[methodName] || {}, // Add the JSON template from our parser
-              optionalFields: optionalFieldsMap[methodName] || [] // Add the optional fields list
+              optionalFields: optionalFieldsMap[methodName] || [], // Add the optional fields list
+              enumFields: enumFieldsMap[methodName] || {} // Add the enum fields map
             };
           }
         } else if (nested.nested) {
@@ -133,12 +139,13 @@ app.post('/api/parse-proto', upload.array('protoFiles'), async (req, res) => {
       await fs.unlink(file.path).catch(() => {});
     }
     
-    log('Sending response with JSON templates and optional fields...');
+    log('Sending response with JSON templates, optional fields, and enum fields...');
     
     const response = { 
       services, 
       methodTemplates: methodMap,
       optionalFields: optionalFieldsMap,
+      enumFields: enumFieldsMap,
       success: true 
     };
     
