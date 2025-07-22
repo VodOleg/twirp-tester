@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Twirp Proto Tester</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; max-width: 1200px; margin: 0 auto; }
+    .container { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .left-panel, .right-panel { padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
+    textarea, input, select, button { width: 100%; margin: 10px 0; padding: 8px; }
+    .field { margin-bottom: 15px; }
+    .field label { display: block; margin-bottom: 5px; font-weight: bold; }
+    button { background: #007acc; color: white; border: none; padding: 12px; cursor: pointer; border-radius: 4px; }
+    button:hover { background: #005a9e; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    pre { background: #f5f5f5; padding: 15px; border-radius: 4px; overflow-x: auto; }
+    .error { color: red; background: #ffe6e6; padding: 10px; border-radius: 4px; margin: 10px 0; }
+    .success { color: green; background: #e6ffe6; padding: 10px; border-radius: 4px; margin: 10px 0; }
+    .file-upload { border: 2px dashed #ddd; padding: 20px; text-align: center; margin: 10px 0; }
+    .file-upload.dragover { border-color: #007acc; background: #f0f8ff; }
+    h2 { margin-top: 0; }
+    h3 { border-bottom: 2px solid #eee; padding-bottom: 5px; }
+    .success { color: #28a745; background: #d4edda; padding: 8px; border-radius: 4px; margin-bottom: 10px; }
+    .error { color: #dc3545; background: #f8d7da; padding: 8px; border-radius: 4px; margin-bottom: 10px; }
+    
+    /* JSON Editor with line numbers */
+    .json-editor-container {
+      position: relative;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background: #fff;
+      font-family: 'Courier New', Courier, monospace;
+    }
+    
+    .json-editor {
+      display: flex;
+      min-height: 300px;
+    }
+    
+    .line-numbers {
+      background: #f8f8f8;
+      border-right: 1px solid #ddd;
+      color: #666;
+      font-size: 12px;
+      line-height: 18px;
+      padding: 8px 4px 8px 8px;
+      text-align: right;
+      user-select: none;
+      min-width: 30px;
+      white-space: pre;
+      overflow: hidden;
+    }
+    
+    .json-textarea {
+      flex: 1;
+      border: none;
+      outline: none;
+      resize: none;
+      padding: 8px;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 12px;
+      line-height: 18px;
+      background: transparent;
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Twirp Proto Tester</h1>
+  
+  <div class="container">
+    <div class="left-panel">
+      <h2>Proto File Configuration</h2>
+      
+      <div class="file-upload" id="fileUpload">
+        <p>Drop proto files here or click to select</p>
+        <input type="file" id="protoFiles" accept=".proto" multiple style="display: none;" />
+      </div>
+      <button type="button" onclick="document.getElementById('protoFiles').click()">
+        Select Proto Files
+      </button>
+      
+      <div id="uploadStatus"></div>
+      
+      <div id="serviceConfig" style="display:none;">
+        <h3>Service Configuration</h3>
+        
+        <div class="field">
+          <label for="serviceSelect">Select Service:</label>
+          <select id="serviceSelect"></select>
+        </div>
+        
+        <div class="field">
+          <label for="methodSelect">Select Method:</label>
+          <select id="methodSelect"></select>
+        </div>
+        
+        <div class="field">
+          <label for="baseUrl">Twirp Server Base URL:</label>
+          <input type="text" id="baseUrl" value="http://localhost:8080" />
+        </div>
+      </div>
+    </div>
+    
+    <div class="right-panel">
+      <h2>Request & Response</h2>
+      
+      <div id="requestForm" style="display:none;">
+        <h3>Request Parameters</h3>
+        <div id="formFields"></div>
+        <button id="sendBtn" disabled>Send Request</button>
+      </div>
+      
+      <div id="responseSection">
+        <h3>Response</h3>
+        <pre id="responseBox">No response yet...</pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let parsedServices = {};
+    let optionalFieldsMap = {};
+    let enumFieldsMap = {};
+    let currentService = null;
+    let currentMethod = null;
+
+    // File upload handling
+    const fileUpload = document.getElementById('fileUpload');
+    const protoFiles = document.getElementById('protoFiles');
+    
+    fileUpload.addEventListener('click', () => protoFiles.click());
+    fileUpload.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      fileUpload.classList.add('dragover');
+    });
+    fileUpload.addEventListener('dragleave', () => {
+      fileUpload.classList.remove('dragover');
+    });
+    fileUpload.addEventListener('drop', (e) => {
+      e.preventDefault();
+      fileUpload.classList.remove('dragover');
+      protoFiles.files = e.dataTransfer.files;
+      handleFileUpload();
+    });
+    
+    protoFiles.addEventListener('change', handleFileUpload);
+
+    async function handleFileUpload() {
+      const files = protoFiles.files;
+      if (files.length === 0) return;
+
+      const uploadStatus = document.getElementById('uploadStatus');
+      uploadStatus.innerHTML = '<div class="success">Parsing proto files...</div>';
+
+      try {
+        const formData = new FormData();
+        for (let file of files) {
+          formData.append('protoFiles', file);
+        }
+
+        const response = await fetch('/api/parse-proto', {
+          method: 'POST',
+          body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          parsedServices = result.services;
+          optionalFieldsMap = result.optionalFields || {};
+          enumFieldsMap = result.enumFields || {};
+          populateServiceDropdown();
+          uploadStatus.innerHTML = '<div class="success">Proto files parsed successfully!</div>';
+          document.getElementById('serviceConfig').style.display = 'block';
+        } else {
+          throw new Error(result.error);
+        }
+
+      } catch (error) {
+        console.error('Upload error:', error);
+        uploadStatus.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+      }
+    }
+
+    function populateServiceDropdown() {
+      const serviceSelect = document.getElementById('serviceSelect');
+      serviceSelect.innerHTML = '';
+      
+      for (const serviceName of Object.keys(parsedServices)) {
+        const option = document.createElement('option');
+        option.value = serviceName;
+        option.textContent = serviceName;
+        serviceSelect.appendChild(option);
+      }
+      
+      if (serviceSelect.options.length > 0) {
+        serviceSelect.dispatchEvent(new Event('change'));
+      }
+    }
+
+    document.getElementById('serviceSelect').addEventListener('change', (e) => {
+      const serviceName = e.target.value;
+      currentService = parsedServices[serviceName];
+      
+      const methodSelect = document.getElementById('methodSelect');
+      methodSelect.innerHTML = '';
+      
+      for (const methodName of Object.keys(currentService.methods)) {
+        const option = document.createElement('option');
+        option.value = methodName;
+        option.textContent = methodName;
+        methodSelect.appendChild(option);
+      }
+      
+      if (methodSelect.options.length > 0) {
+        methodSelect.dispatchEvent(new Event('change'));
+      }
+    });
+
+    document.getElementById('methodSelect').addEventListener('change', (e) => {
+      const methodName = e.target.value;
+      currentMethod = currentService.methods[methodName];
+      generateRequestForm();
+    });
+
+    async function generateRequestForm() {
+      if (!currentMethod) return;
+
+      const formFields = document.getElementById('formFields');
+      formFields.innerHTML = `<p>Loading form for ${currentMethod.requestType}...</p>`;
+
+      try {
+        // Get optional fields and enum fields for the current method
+        const methodName = currentMethod.name;
+        const optionalFields = optionalFieldsMap[methodName] || [];
+        const enumFields = enumFieldsMap[methodName] || {};
+        
+        // Create legend with optional fields and enum fields
+        let legend = '';
+        
+        if (optionalFields.length > 0 || Object.keys(enumFields).length > 0) {
+          legend = '<div style="background: #e8f4f8; padding: 15px; border-radius: 4px; margin-bottom: 15px; border-left: 4px solid #007acc;">';
+          
+          // Add optional fields section
+          if (optionalFields.length > 0) {
+            legend += `<div style="margin-bottom: 10px;"><strong>Optional fields:</strong> ${optionalFields.join(', ')}</div>`;
+          }
+          
+          // Add enum fields section
+          if (Object.keys(enumFields).length > 0) {
+            legend += '<div><strong>Enum fields:</strong></div>';
+            legend += '<ul style="margin: 5px 0 0 20px; padding: 0;">';
+            for (const [fieldPath, enumValues] of Object.entries(enumFields)) {
+              legend += `<li><strong>${fieldPath}:</strong> [${enumValues.join(', ')}]</li>`;
+            }
+            legend += '</ul>';
+          }
+          
+          legend += '</div>';
+        }
+
+        // Use the JSON template from our protoparser if available
+        let initialJson = '{}';
+        if (currentMethod.jsonTemplate && Object.keys(currentMethod.jsonTemplate).length > 0) {
+          initialJson = JSON.stringify(currentMethod.jsonTemplate, null, 2);
+          formFields.innerHTML = `
+            ${legend}
+            <div class="success">✅ Generated JSON template from proto structure</div>
+            <div class="field">
+              <label>Request JSON (pre-filled from proto definition):</label>
+              <div class="json-editor-container">
+                <div class="json-editor">
+                  <div class="line-numbers" id="lineNumbers"></div>
+                  <textarea class="json-textarea" id="requestJson" placeholder="Enter request JSON here...">${initialJson}</textarea>
+                </div>
+              </div>
+            </div>
+          `;
+        } else {
+          formFields.innerHTML = `
+            ${legend}
+            <div style="color: orange;">⚠️ Note: Could not parse message structure. Using basic template.</div>
+            <div class="field">
+              <label>Request JSON:</label>
+              <div class="json-editor-container">
+                <div class="json-editor">
+                  <div class="line-numbers" id="lineNumbers"></div>
+                  <textarea class="json-textarea" id="requestJson" placeholder="Enter request JSON here...">{}</textarea>
+                </div>
+              </div>
+            </div>
+          `;
+        }
+
+        // Initialize line numbers after the textarea is created
+        setTimeout(() => {
+          initializeLineNumbers();
+        }, 0);
+
+        document.getElementById('requestForm').style.display = 'block';
+        document.getElementById('sendBtn').disabled = false;
+
+      } catch (error) {
+        console.error('Form generation error:', error);
+        formFields.innerHTML = `<div class="error">Error generating form: ${error.message}</div>`;
+      }
+    }
+
+    function initializeLineNumbers() {
+      const textarea = document.getElementById('requestJson');
+      const lineNumbers = document.getElementById('lineNumbers');
+      
+      if (!textarea || !lineNumbers) return;
+      
+      function updateLineNumbers() {
+        const lines = textarea.value.split('\n');
+        const lineNumbersText = lines.map((_, index) => index + 1).join('\n');
+        lineNumbers.textContent = lineNumbersText;
+        
+        // Sync scroll position
+        lineNumbers.scrollTop = textarea.scrollTop;
+      }
+      
+      // Update line numbers on content change
+      textarea.addEventListener('input', updateLineNumbers);
+      textarea.addEventListener('scroll', () => {
+        lineNumbers.scrollTop = textarea.scrollTop;
+      });
+      
+      // Initial line numbers
+      updateLineNumbers();
+    }
+
+    document.getElementById('sendBtn').addEventListener('click', async () => {
+      const serviceName = document.getElementById('serviceSelect').value;
+      const methodName = document.getElementById('methodSelect').value;
+      const baseUrl = document.getElementById('baseUrl').value;
+      const requestJson = document.getElementById('requestJson').value;
+
+      try {
+        const payload = JSON.parse(requestJson);
+        const service = parsedServices[serviceName];
+
+        document.getElementById('responseBox').textContent = 'Sending request...';
+
+        // Use our backend endpoint to make the Twirp request (avoids CORS issues)
+        const response = await fetch('/api/twirp-request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            baseUrl: baseUrl,
+            serviceName: service.fullName,
+            methodName: methodName,
+            requestData: payload
+          }),
+        });
+
+        const result = await response.json();
+        
+        if (result.success) {
+          document.getElementById('responseBox').textContent = JSON.stringify(result.data, null, 2);
+        } else {
+          document.getElementById('responseBox').textContent = `Error (${result.status}): ${JSON.stringify(result.data || result.error, null, 2)}`;
+        }
+
+      } catch (error) {
+        document.getElementById('responseBox').textContent = `Error: ${error.message}`;
+      }
+    });
+  </script>
+</body>
+</html>
