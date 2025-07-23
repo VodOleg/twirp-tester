@@ -7,8 +7,11 @@ A web-based tool for testing Twirp RPC services with automatic JSON template gen
 - 🚀 **Auto JSON Template Generation**: Automatically generates accurate JSON request templates from proto files
 - 📝 **Complex Proto Support**: Handles nested messages, enums, imports, and google.protobuf types
 - 🎯 **Twirp Ready**: Pre-configured for Twirp RPC testing with proper URL construction
-- 🖥️ **Web Interface**: Clean, intuitive drag-and-drop interface
+- 🖥️ **Web Interface**: Clean, intuitive drag-and-drop interface with line-numbered JSON editor
 - 📋 **Smart Defaults**: Provides contextual default values for different field types
+- ⏰ **Auto Timestamps**: Automatically fills google.protobuf.Timestamp fields with current time
+- 🏷️ **Field Metadata**: Shows optional fields and enum values in an easy-to-read legend
+- 🔍 **Error-Friendly**: Line numbers in JSON editor help identify syntax errors quickly
 
 ## Quick Start
 
@@ -41,65 +44,133 @@ A web-based tool for testing Twirp RPC services with automatic JSON template gen
 
 1. **Upload Proto Files**: Drag and drop your `.proto` files or click to select them
 2. **Select Service & Method**: Choose from the automatically detected services and methods
-3. **Review JSON Template**: The tool generates a complete JSON template with proper field types
+3. **Review Generated Template**: The tool automatically:
+   - Generates complete JSON templates with proper field types
+   - Shows optional fields and enum values in a legend
+   - Pre-fills timestamp fields with current time
+   - Provides line numbers for easy editing
 4. **Configure Server**: Set your Twirp server base URL
 5. **Send Request**: Test your Twirp endpoint with the generated request
 
 ## Example
 
-For a proto definition like:
+The `examples/` folder contains a sample `user_service.proto` file that demonstrates:
+
 ```protobuf
-service PostRide {
-  rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
+service UserService {
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse);
 }
 
-message CancelOrderRequest {
-  int64 id = 1;
-  OrderData data = 2;
-  AuditInfo audit = 3;
-}
-```
+message CreateUserRequest {
+  string name = 1;                              // required
+  string email = 2;                             // required  
+  optional int32 age = 3;                       // optional
+  optional UserType user_type = 4;              // optional enum
+  optional google.protobuf.Timestamp created_at = 5; // auto-filled with current time
+  Address address = 6;                          // required nested message
 
-The tool automatically generates:
-```json
-{
-  "id": 0,
-  "data": {
-    "cancellation_outcome": "UNDEFINED",
-    "cancelled_at": "",
-    "payment": {
-      "tip": { "percentage": 0 },
-      "payment_type": "UNDEFINED"
-    }
-  },
-  "audit": {
-    "username": "",
-    "source": "UNDEFINED"
+  enum UserType {
+    STANDARD = 0;
+    PREMIUM = 1;
+    ADMIN = 2;
   }
 }
 ```
 
+For this proto definition, the tool automatically generates:
+
+```json
+{
+  "name": "",
+  "email": "",
+  "age": 0,
+  "user_type": "STANDARD",
+  "created_at": "2025-07-23T18:30:00.000Z",
+  "address": {
+    "street": "",
+    "city": "",
+    "state": "",
+    "postal_code": "",
+    "country": "US"
+  }
+}
+```
+
+Plus a helpful legend showing:
+- **Optional fields:** age, user_type, created_at
+- **Enum fields:** user_type: [STANDARD, PREMIUM, ADMIN], address.country: [US, CA, UK, DE, FR]
 ## Project Structure
 
 ```
 twirp-proto-tester/
-├── server.js              # Express server with proto parsing
+├── server.js              # Express server with proto parsing and Twirp proxy
 ├── protoparser.js          # Core proto parsing and template generation
 ├── public/
-│   └── index.html         # Web interface
+│   └── index.html         # Web interface with line-numbered JSON editor
 ├── imports/               # External proto dependencies (gitignored)
-│   ├── google/protobuf/   # Common protobuf definitions
-│   └── gett/api/          # Additional proto imports
+│   └── google/protobuf/   # Common protobuf definitions (timestamp.proto, etc.)
 ├── examples/              # Example proto files (gitignored)
-│   └── post_ride.proto    # Sample proto file for testing
+│   └── user_service.proto # Sample proto file demonstrating features
 └── package.json          # Dependencies and scripts
 ```
 
+## Key Features in Detail
+
+### Smart Template Generation
+- **Nested Messages**: Properly handles complex nested message structures
+- **Enum Defaults**: Uses the first enum value (usually the zero/default value)
+- **Timestamp Auto-fill**: google.protobuf.Timestamp fields get current ISO 8601 time
+- **Type-aware Defaults**: Appropriate defaults for strings, numbers, booleans, etc.
+
+### Enhanced User Experience
+- **Line Numbers**: JSON editor with line numbers for easy error identification
+- **Field Legends**: Shows optional fields and available enum values
+- **Drag & Drop**: Simple file upload with visual feedback
+- **CORS Handling**: Built-in proxy to avoid browser CORS issues with Twirp servers
+
+### Import Resolution
+- Automatically resolves proto file imports
+- Supports google.protobuf.* types out of the box
+- Handles relative import paths correctly
+
 ## API Endpoints
 
-- `POST /api/parse-proto` - Upload and parse proto files
-- `GET /logs` - View server logs
+- `POST /api/parse-proto` - Upload and parse proto files, returns services with templates
+- `POST /api/twirp-request` - Proxy Twirp requests to avoid CORS issues
 - `GET /` - Serve the web interface
+
+## Development
+
+### Running in Development Mode
+```bash
+npm run dev     # Start with nodemon for auto-restart
+```
+
+### Testing with Example Files
+1. Start the server: `npm start`
+2. Upload the `examples/user_service.proto` file
+3. Select the UserService and any method
+4. Observe the auto-generated JSON template with timestamps and enum defaults
+
+### Adding New Proto Files
+1. Place your `.proto` files and any imports in the appropriate directories
+2. Upload via the web interface
+3. The tool will automatically parse and generate templates
+
+## Common Use Cases
+
+- **API Development**: Quickly test new Twirp endpoints during development
+- **Documentation**: Generate example requests for API documentation
+- **Debugging**: Test request formats and troubleshoot API issues
+- **Integration Testing**: Validate proto definitions work with real services
+
+## Requirements
+
+- Node.js 14+ (tested with v18.15.0)
+- Modern web browser with JavaScript enabled
+- Twirp-compatible RPC server for testing (optional)
 
 ## Dependencies
 
