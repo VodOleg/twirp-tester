@@ -261,8 +261,22 @@ app.get('/logs', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  log(`Twirp Proto Tester server running on http://localhost:${PORT}`);
-  log(`View logs at http://localhost:${PORT}/logs`);
+const PORT = process.env.PORT || 8765;  // Less common port
+const HOST = process.env.HOST || 'localhost';
+
+app.listen(PORT, HOST, () => {
+  log(`Twirp Proto Tester server running on http://${HOST}:${PORT}`);
+  log(`View logs at http://${HOST}:${PORT}/logs`);
+  log(`Process ID: ${process.pid}`);
+});
+
+// Graceful shutdown handling
+process.on('SIGTERM', () => {
+  log('Received SIGTERM, shutting down gracefully');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  log('Received SIGINT, shutting down gracefully');
+  process.exit(0);
 });

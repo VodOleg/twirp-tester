@@ -38,7 +38,47 @@ A web-based tool for testing Twirp RPC services with automatic JSON template gen
    npm start
    ```
 
-4. Open your browser and navigate to `http://localhost:3000`
+4. Open your browser and navigate to `http://localhost:8765`
+
+### Production Deployment (Background Service)
+
+For production use, you can run the service as a background process that automatically starts on system boot:
+
+1. **Install PM2** (if not already installed):
+   ```bash
+   sudo npm install -g pm2
+   ```
+
+2. **Start as background service**:
+   ```bash
+   pm2 start ecosystem.config.js
+   ```
+
+3. **Set up auto-startup** (run once):
+   ```bash
+   pm2 startup
+   pm2 save
+   ```
+
+4. **Use the service management script**:
+   ```bash
+   # Show available commands
+   ./service.sh
+
+   # Common operations
+   ./service.sh status    # Check service status
+   ./service.sh logs      # View logs
+   ./service.sh restart   # Restart service
+   ./service.sh open      # Open in browser
+   ```
+
+5. **Health monitoring**:
+   ```bash
+   ./health-check.sh      # Check service health
+   pm2 monit             # Real-time monitoring
+   ```
+
+The service runs on **port 8765** by default (configurable via `PORT` environment variable).
 
 ## Usage
 
